@@ -1,0 +1,318 @@
+{
+  "name": "TalentFlow v2 | 06_Interview_Context",
+  "nodes": [
+    {
+      "id": "fcbe2744-e071-4ef6-a27f-63f983aa81c9",
+      "name": "Website request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "talentflow-v2-06",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "webhookId": "b0e34412-ffe7-4d85-be5c-bd6f83a807c8"
+    },
+    {
+      "id": "b30a08fa-ae46-45c5-b564-150ae2d37985",
+      "name": "Authenticate before reading tables",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const req = $input.first().json;\nconst secret = \"__SET_SECRET__\";\nif (secret === '__SET_SECRET__' || secret.length < 32) throw new Error('Run npm run setup:n8n then import n8n/local-configured/ files');\nif (req.headers?.['x-talentflow-secret'] !== secret) throw new Error('Unauthorized');\nconst body = req.body;\nif (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Invalid JSON request');\nconst allowed = [\"getInterview\"];\nif (allowed && !allowed.includes(body.action)) throw new Error('Action not supported by this workflow');\nreturn [{json: body}];"
+      }
+    },
+    {
+      "id": "e070aa4e-e0a2-4c25-8e4d-b6eb2701de5f",
+      "name": "Read authoritative Data Table",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        440,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "talentflow_v2_records"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": []
+        },
+        "returnAll": true
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "b81ebe76-aec6-4fdc-b515-189e9ecac5f9",
+      "name": "Validate and plan changes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// This module executes INSIDE n8n Code nodes. The website never runs business logic.\n// Pure planning: Data Table nodes perform every read/write before HTTP success.\nconst VERSION = 'talentflow-v2';\nconst ACTIONS = ['snapshot', 'createJob', 'updateJob', 'syncResumes', 'importCandidate', 'verifyCandidate', 'runScreening', 'updateApplication', 'createInterview', 'getInterview', 'saveAnswer', 'finishInterview', 'questionAudio', 'recruiterReport'];\n\nfunction execute(input, rows, context = {}) {\n  const now = context.now || new Date().toISOString();\n  const writes = new Map();\n  const records = new Map();\n  for (const row of rows) {\n    if (!row.key) continue; // n8n alwaysOutputData empty sentinel\n    if (records.has(row.key)) throw new Error('Duplicate record key: repair the table before continuing');\n    const parsed = JSON.parse(row.payload);\n    records.set(row.key, { kind: row.kind, data: parsed });\n  }\n  const error = (message) => { throw new Error(message); };\n  const str = (value, label, max = 1000) => {\n    if (typeof value !== 'string' || !value.trim() || value.length > max) error(`مقدار «${label}» معتبر نیست`);\n    return value.trim();\n  };\n  const number = (value, min, max, label) => {\n    if (value === '' || value === null || value === undefined || !Number.isFinite(Number(value)) || Number(value) < min || Number(value) > max) error(`مقدار «${label}» باید بین ${min} و ${max} باشد`);\n    return Number(value);\n  };\n  const list = (value) => (Array.isArray(value) ? value : String(value || '').split(/[,،\\n]/)).map(x => String(x).trim()).filter(Boolean).slice(0, 30);\n  const all = (kind) => [...records.values()].filter(x => x.kind === kind).map(x => x.data);\n  const get = (kind, id) => {\n    const row = records.get(`${kind}:${id}`);\n    return row?.kind === kind ? JSON.parse(JSON.stringify(row.data)) : error('رکورد پیدا نشد؛ صفحه را تازه کنید');\n  };\n  const save = (kind, data) => {\n    data.updatedAt = now;\n    const row = { key: `${kind}:${data.id}`, kind, payload: JSON.stringify(data) };\n    writes.set(row.key, row);\n    records.set(row.key, { kind, data });\n    return data;\n  };\n  const event = (record, action, note = '') => {\n    record.history ||= [];\n    record.history.push({ at: now, action, note });\n  };\n  const requestId = () => str(input.requestId, 'شناسه درخواست', 100);\n  const makeId = (prefix) => `${prefix}_${requestId()}`;\n  const pairId = (jobId, candidateId) => `${jobId}~${candidateId}`;\n  const snapshot = () => ({ jobs: all('job'), candidates: all('candidate'), applications: all('application') });\n  const applicationView = (app) => ({ ...app, candidate: get('candidate', app.candidateId), job: get('job', app.jobId) });\n  const authenticateInterview = () => {\n    const token = str(input.token, 'لینک مصاحبه', 128);\n    if (token.length < 32) error('لینک مصاحبه معتبر نیست');\n    const app = all('application').find(a => a.session?.token === token);\n    if (!app || !['approved', 'interviewed', 'hired', 'rejected_after_interview'].includes(app.status)) error('لینک مصاحبه نامعتبر یا لغو شده است');\n    if (Date.parse(app.session.expiresAt) < Date.parse(now)) error('اعتبار لینک مصاحبه تمام شده است');\n    return JSON.parse(JSON.stringify(app));\n  };\n  const publicInterview = (app) => ({\n    id: app.session.id, candidateName: get('candidate', app.candidateId).name,\n    jobTitle: get('job', app.jobId).title, status: app.session.status,\n    questions: app.session.questions, answers: app.session.answers,\n    evaluation: app.session.evaluation || null, expiresAt: app.session.expiresAt,\n  });\n  const questions = (candidate, job) => [\n    { id: 'q1', competency: 'تجربه مرتبط', text: `برای نقش «${job.title}»، یک پروژه مرتبط با ${job.skills[0]} را با سهم شخصی و نتیجه قابل‌اندازه‌گیری توضیح دهید.` },\n    { id: 'q2', competency: 'مهارت تخصصی', text: `در رزومه شما مهارت ${candidate.skills[0] || job.skills[0]} آمده است. یک تصمیم فنی دشوار درباره آن و دلیل انتخاب خود را شرح دهید.` },\n    { id: 'q3', competency: 'حل مسئله', text: `برای رسیدن به هدف «${job.goal}» با داده یا اطلاعات ناقص چه فرض‌هایی را ابتدا آزمایش می‌کنید؟` },\n    { id: 'q4', competency: 'همکاری', text: 'یک اختلاف حرفه‌ای در تیم را شرح دهید؛ چه کردید و نتیجه چه شد؟' },\n    { id: 'q5', competency: 'برنامه اجرایی', text: `در ۹۰ روز اول نقش ${job.title} چه خروجی مشخص و قابل‌سنجشی تحویل می‌دهید؟` },\n  ];\n  const provisionSession = (app) => {\n    if (app.session) return app;\n    const token = str(input.sessionToken, 'توکن تصادفی جلسه', 128);\n    if (!/^[a-f0-9]{64}$/.test(token)) error('توکن امن جلسه ارسال نشده است');\n    const candidate = get('candidate', app.candidateId), job = get('job', app.jobId);\n    app.session = { id: `session_${app.id}`, token, status: 'ready', createdAt: now,\n      expiresAt: new Date(Date.parse(now) + 7 * 86400000).toISOString(),\n      questions: questions(candidate, job), answers: [], evaluation: null, provider: 'mock' };\n    app.invitation = { provider: 'mock', status: 'simulated', to: candidate.email, at: now,\n      subject: `دعوت به مصاحبه ${job.title}`, message: 'ارسال ایمیل شبیه‌سازی شده است؛ لینک را از سایت باز یا کپی کنید.' };\n    event(app, 'interview_created', 'پرسش‌های ماک ساخته شد؛ ایمیل واقعی ارسال نشد');\n    return app;\n  };\n  if (!ACTIONS.includes(input.action)) error('عملیات ناشناخته است');\n  let result;\n  switch (input.action) {\n    case 'snapshot': result = snapshot(); break;\n    case 'createJob': {\n      const id = makeId('job');\n      if (records.has(`job:${id}`)) { result = get('job', id); break; }\n      const title = str(input.title, 'عنوان شغل', 150), skills = list(input.skills);\n      if (!skills.length) error('حداقل یک مهارت ضروری وارد کنید');\n      const goal = str(input.goal, 'هدف شغل', 2000);\n      result = save('job', { id, title, department: str(input.department, 'واحد', 150),\n        location: str(input.location, 'محل همکاری', 200), goal, skills,\n        minExperience: number(input.minExperience ?? 0, 0, 50, 'سابقه'),\n        passScore: number(input.passScore ?? 70, 0, 100, 'حدنصاب مصاحبه'),\n        description: `شرح شغل آزمایشی: ${title}\\nهدف: ${goal}\\nمهارت‌های ضروری: ${skills.join('، ')}\\nاین متن توسط الگوی ماک تولید شده و نیازمند تأیید مسئول استخدام است.`,\n        status: 'draft', rubricVersion: 'mock-skill-overlap-v1', provider: 'mock', createdAt: now,\n        history: [{ at: now, action: 'draft_created' }] }); break;\n    }\n    case 'updateJob': {\n      const job = get('job', input.jobId);\n      if (!['active', 'closed'].includes(input.status)) error('وضعیت شغل نامعتبر است');\n      if (input.status === 'active' && input.confirmed !== true) error('تأیید انسانی شرح شغل لازم است');\n      job.status = input.status; event(job, 'job_status', input.status); result = save('job', job); break;\n    }\n    case 'syncResumes': {\n      // Only the external Drive/LLM output is simulated; these rows are persisted.\n      const samples = [\n        ['demo_ml_1', 'داوطلب آزمایشی یک', 'demo.one@example.com', ['Python', 'PyTorch', 'MLOps', 'SQL', 'Docker', 'FastAPI'], 6],\n        ['demo_ml_2', 'داوطلب آزمایشی دو', 'demo.two@example.com', ['Python', 'PyTorch', 'MLOps', 'SQL', 'React', 'Figma'], 4],\n        ['demo_design', 'داوطلب آزمایشی سه', 'demo.three@example.com', ['Figma', 'UX Research', 'Design Systems'], 3],\n      ];\n      const added = [];\n      for (const [id, name, email, skills, experience] of samples) {\n        if (records.has(`candidate:${id}`)) continue;\n        added.push(save('candidate', { id, name, email, skills, experience, verified: false,\n          resumeText: `رزومه نمونه ساختگی. مهارت‌ها: ${skills.join('، ')}. سابقه ادعایی ${experience} سال.`,\n          source: 'mock-drive', createdAt: now, history: [{ at: now, action: 'mock_ingest' }] }));\n      }\n      result = { count: added.length, candidates: added }; break;\n    }\n    case 'importCandidate': {\n      const email = str(input.email, 'ایمیل', 254).toLowerCase();\n      if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) error('ایمیل معتبر نیست');\n      if (all('candidate').some(c => c.email === email)) error('رزومه این ایمیل قبلاً ثبت شده است');\n      const skills = list(input.skills); if (!skills.length) error('مهارت‌ها را وارد کنید');\n      result = save('candidate', { id: makeId('candidate'), name: str(input.name, 'نام', 150), email, skills,\n        experience: number(input.experience, 0, 50, 'سابقه'), resumeText: str(input.resumeText, 'متن رزومه', 30000),\n        verified: false, source: 'manual-text', createdAt: now, history: [{ at: now, action: 'manual_ingest' }] }); break;\n    }\n    case 'verifyCandidate': {\n      const candidate = get('candidate', input.candidateId);\n      if (input.confirmed !== true) error('تأیید اطلاعات رزومه لازم است');\n      candidate.verified = true; event(candidate, 'human_verified'); result = save('candidate', candidate); break;\n    }\n    case 'runScreening': {\n      const job = get('job', input.jobId);\n      if (job.status !== 'active') error('ابتدا شرح شغل را تأیید و فعال کنید');\n      const limit = number(input.limit, 1, 40, 'تعداد خروجی');\n      if (!Number.isInteger(limit)) error('تعداد خروجی باید عدد صحیح باشد');\n      const minScore = number(input.minScore, 0, 100, 'حداقل امتیاز');\n      const candidates = all('candidate').filter(c => c.verified && !records.has(`application:${pairId(job.id, c.id)}`));\n      const ranked = candidates.map(c => {\n        const found = job.skills.filter(s => c.skills.some(cs => cs.toLowerCase() === s.toLowerCase()));\n        const missing = job.skills.filter(s => !found.includes(s));\n        const score = Math.round(80 * found.length / job.skills.length + 20 * (job.minExperience === 0 ? 1 : Math.min(1, c.experience / job.minExperience)));\n        return { c, found, missing, score };\n      }).filter(x => x.score >= minScore).sort((a,b) => b.score - a.score || a.c.id.localeCompare(b.c.id)).slice(0, limit);\n      const applications = ranked.map(({c, found, missing, score}) => save('application', {\n        id: pairId(job.id, c.id), jobId: job.id, candidateId: c.id, status: 'suggested', createdAt: now,\n        screening: { score, matchedSkills: found, missingSkills: missing, minScore, limit,\n          rubricVersion: job.rubricVersion, provider: 'mock', note: 'امتیاز آزمایشی تطبیق واژه‌ای مهارت‌ها؛ ارزیابی واقعی AI نیست.' },\n        history: [{ at: now, action: 'shortlisted' }], session: null, invitation: null,\n      }));\n      result = { count: applications.length, applications, note: applications.length ? 'فهرست در جدول ذخیره شد' : 'داوطلب جدید واجد شرایط نیست؛ تأیید رزومه، حدنصاب و سابقه بررسی همین شغل را کنترل کنید.' }; break;\n    }\n    case 'updateApplication': {\n      const app = get('application', input.applicationId);\n      const status = input.status;\n      if (!['approved', 'rejected', 'hired', 'rejected_after_interview'].includes(status)) error('تصمیم نامعتبر است');\n      if (app.status === status) { result = app; break; }\n      const allowed = app.status === 'suggested' ? ['approved','rejected'] : app.status === 'interviewed' ? ['hired','rejected_after_interview'] : [];\n      if (!allowed.includes(status)) error('این تغییر وضعیت مجاز نیست');\n      const note = str(input.note, 'دلیل تصمیم مسئول استخدام', 2000);\n      app.status = status; app.decisionNote = note; event(app, status, note);\n      if (status === 'approved') provisionSession(app);\n      result = save('application', app); break;\n    }\n    case 'createInterview': {\n      const app = get('application', input.applicationId);\n      if (app.status !== 'approved') error('مصاحبه فقط بعد از تأیید مسئول استخدام ساخته می‌شود');\n      result = save('application', provisionSession(app)); break;\n    }\n    case 'getInterview': result = publicInterview(authenticateInterview()); break;\n    case 'questionAudio': {\n      const app = authenticateInterview(), q = app.session.questions.find(q => q.id === input.questionId);\n      if (!q) error('سؤال نامعتبر است');\n      result = { text: q.text, language: 'fa-IR', provider: 'browser-speech', mock: true }; break;\n    }\n    case 'saveAnswer': {\n      const app = authenticateInterview(), session = app.session;\n      if (session.status === 'completed') error('مصاحبه پایان یافته و پاسخ‌ها قابل تغییر نیستند');\n      if (!session.questions.some(q => q.id === input.questionId)) error('سؤال نامعتبر است');\n      const text = str(input.text, 'پاسخ', 10000);\n      const answer = { questionId: input.questionId, text, at: now, source: input.source === 'mock-stt' ? 'mock-stt' : 'typed' };\n      session.answers = [...session.answers.filter(a => a.questionId !== answer.questionId), answer];\n      session.status = 'in_progress'; event(app, 'answer_saved', answer.questionId);\n      save('application', app); result = publicInterview(app); break;\n    }\n    case 'finishInterview': {\n      const app = authenticateInterview(), session = app.session;\n      if (session.status === 'completed') { result = publicInterview(app); break; }\n      if (session.answers.length !== session.questions.length || session.questions.some(q => !session.answers.some(a => a.questionId === q.id))) error('ابتدا پاسخ همه سؤال‌ها را ثبت کنید');\n      // Deliberately explicit mock: length-based score is NOT an employment assessment.\n      const dimensions = session.questions.map(q => {\n        const answer = session.answers.find(a => a.questionId === q.id);\n        const wordCount = answer.text.split(/\\s+/).length;\n        return { competency: q.competency, score: Math.min(95, 40 + Math.min(55, wordCount)), evidence: answer.text.slice(0, 160) };\n      });\n      const score = Math.round(dimensions.reduce((n,d) => n + d.score, 0) / dimensions.length);\n      session.evaluation = { score, dimensions, provider: 'mock', rubricVersion: 'mock-answer-length-v1',\n        threshold: get('job', app.jobId).passScore, aboveThreshold: score >= get('job', app.jobId).passScore,\n        summary: 'نمره نمایشی بر اساس طول پاسخ‌ها است، نه کیفیت یا شایستگی فرد. تصمیم استخدام فقط با مسئول انسانی است.', at: now };\n      session.status = 'completed'; session.completedAt = now; app.status = 'interviewed';\n      event(app, 'interview_completed', 'گزارش ماک ذخیره شد؛ در انتظار تصمیم انسانی');\n      save('application', app); result = publicInterview(app); break;\n    }\n    case 'recruiterReport': result = input.applicationId ? applicationView(get('application', input.applicationId)) : { applications: all('application').map(applicationView) }; break;\n  }\n  return { writes: [...writes.values()], response: { ok: true, version: VERSION, mock: true, result } };\n}\n\ntry { return [{json: execute($('Authenticate before reading tables').first().json, $input.all().map(i => i.json))}]; } catch (error) { return [{json: {writes: [], response: {ok:false, version: VERSION, error:error.message}}}]; }"
+      }
+    },
+    {
+      "id": "4a7d1f7c-41c0-4a4f-b5cb-f1f233a8eca7",
+      "name": "Has records to save",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "d09feaa3-2575-45d1-be03-b33cb575d2f6",
+              "leftValue": "={{ $json.writes.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "0545b782-7d9b-4f61-a5d3-d12d7d00a18e",
+      "name": "Emit records",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        -140
+      ],
+      "parameters": {
+        "jsCode": "return $('Validate and plan changes').first().json.writes.map(row => ({json: row}));"
+      }
+    },
+    {
+      "id": "675da686-5ffe-4f69-bc04-d714e867948a",
+      "name": "Persist records (upsert)",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        -140
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "talentflow_v2_records"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "key",
+              "condition": "eq",
+              "keyValue": "={{ $json.key }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "key": "={{ $json.key }}",
+            "kind": "={{ $json.kind }}",
+            "payload": "={{ $json.payload }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "key",
+              "displayName": "key",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "kind",
+              "displayName": "kind",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "payload",
+              "displayName": "payload",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "readOnly": false,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "4a9db353-fcee-4e55-a4be-e0019befb4b8",
+      "name": "Respond only after persistence",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1540,
+        0
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $('Validate and plan changes').first().json.response }}",
+        "options": {
+          "responseCode": "={{ $('Validate and plan changes').first().json.response.ok ? 200 : 400 }}"
+        }
+      }
+    },
+    {
+      "id": "bdddd87a-b1df-468d-8a1e-8b2e26361111",
+      "name": "Read me",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        400,
+        -400
+      ],
+      "parameters": {
+        "content": "## TalentFlow v2 — n8n + Data Tables\nOnly external service outputs are mocked. No in-browser database.\n00 creates an isolated table. 10 contains all actions; 01–09 are optional separate endpoints.\nGenerate a private import copy with npm run setup:n8n. Publish 10.\nMock scores are demonstration-only; HR makes the final decision.\nSingle recruiter demonstration, not concurrent production hiring.",
+        "height": 280,
+        "width": 650
+      }
+    }
+  ],
+  "connections": {
+    "Website request": {
+      "main": [
+        [
+          {
+            "node": "Authenticate before reading tables",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Authenticate before reading tables": {
+      "main": [
+        [
+          {
+            "node": "Read authoritative Data Table",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read authoritative Data Table": {
+      "main": [
+        [
+          {
+            "node": "Validate and plan changes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate and plan changes": {
+      "main": [
+        [
+          {
+            "node": "Has records to save",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has records to save": {
+      "main": [
+        [
+          {
+            "node": "Emit records",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond only after persistence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emit records": {
+      "main": [
+        [
+          {
+            "node": "Persist records (upsert)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist records (upsert)": {
+      "main": [
+        [
+          {
+            "node": "Respond only after persistence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "none",
+    "executionTimeout": 60
+  },
+  "pinData": {}
+}

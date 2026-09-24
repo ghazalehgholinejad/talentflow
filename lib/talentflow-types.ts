@@ -1,0 +1,10 @@
+export type HistoryEvent = { at: string; action: string; note?: string };
+export type Job = { id: string; title: string; department: string; location: string; goal: string; skills: string[]; minExperience: number; passScore: number; description: string; status: 'draft'|'active'|'closed'; createdAt: string };
+export type Candidate = { id: string; name: string; email: string; skills: string[]; experience: number; resumeText: string; verified: boolean; source: string };
+export type Question = { id: string; text: string; competency: string };
+export type Answer = { questionId: string; text: string; source: string; at: string };
+export type Evaluation = { score: number; dimensions: {competency: string; score: number; evidence: string}[]; summary: string; threshold: number; aboveThreshold: boolean; provider: string };
+export type Session = { id: string; token: string; status: string; questions: Question[]; answers: Answer[]; evaluation: Evaluation|null; expiresAt: string };
+export type Application = { id: string; jobId: string; candidateId: string; status: string; decisionNote?: string; screening: { score: number; matchedSkills: string[]; missingSkills: string[]; note: string }; session: Session|null; invitation: {message: string}|null; history: HistoryEvent[] };
+export type Snapshot = { jobs: Job[]; candidates: Candidate[]; applications: Application[] };
+export type PublicInterview = Omit<Session, 'token'> & { candidateName: string; jobTitle: string };
