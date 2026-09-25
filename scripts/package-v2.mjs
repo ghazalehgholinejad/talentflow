@@ -11,7 +11,7 @@ const includes=['package.json','package-lock.json','tsconfig.json','next.config.
   'lib/utils.ts','lib/n8n-gateway.ts','lib/talentflow-client.ts','lib/talentflow-types.ts',
   'scripts/build-verified.sh','scripts/sites-env.sh','scripts/install-ci.sh','scripts/configure-v2.mjs','scripts/generate-v2-workflows.mjs','scripts/smoke-v2.mjs','scripts/package-v2.mjs',
   'n8n/source','n8n/release-v2','tests','docs/RUN_V2_FA.md','docs/ARCHITECTURE_V2.md','docs/VERIFICATION_V2.md',
-  'docs/RESUME.md','docs/TECHNICAL_WALKTHROUGH_FA.md','docs/GITHUB_PREPARATION_FA.md','docs/ROADMAP.md'];
+  'docs/RESUME.md','docs/TECHNICAL_WALKTHROUGH_FA.md','docs/GITHUB_PREPARATION_FA.md','docs/ROADMAP.md','docs/images'];
 for(const relative of includes){await mkdir(path.dirname(path.join(target,relative)),{recursive:true});await cp(path.join(root,relative),path.join(target,relative),{recursive:true,filter:p=>!p.endsWith('.DS_Store')});}
 // A source archive should not carry the original hosting project's identity.
 const hostingPath=path.join(target,'.openai/hosting.json');

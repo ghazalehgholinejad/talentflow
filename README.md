@@ -4,6 +4,22 @@ TalentFlow explores the handoff between a recruiter dashboard and a workflow bac
 
 This is a single-recruiter portfolio prototype, not a production hiring product. External AI and communication services are mocked. Local checks and pending cloud verification are documented separately.
 
+## Interface preview
+
+Real screenshots captured from the local application on 2026-09-25. These show the **disconnected, empty-state prototype**, not a completed recruitment demo. The n8n gateway was unavailable at capture time, so actions requiring it remain disabled. AI outputs and email delivery are mocked; no candidate records or credentials appear in these images.
+
+### Dashboard
+
+![Persian RTL dashboard with an unconfirmed n8n connection and empty counters](docs/images/dashboard-preview.png)
+
+### Screening controls
+
+![Job-specific screening form with a limit of two, threshold of 70, and execution disabled while disconnected](docs/images/screening-preview.png)
+
+پیش‌نمایش واقعی رابط کاربری در حالت قطع اتصال است؛ این تصاویر اجرای موفق فرایند استخدام یا ارزیابی واقعی داوطلب را نشان نمی‌دهند.
+
+A full walkthrough video is pending successful n8n setup and end-to-end verification. See the [verification record](docs/VERIFICATION_V2.md) for the distinction between local tests and cloud execution.
+
 ## Project tour
 
 The browser sends actions to a local TypeScript proxy. The proxy authenticates requests to n8n, where workflow nodes load records, run the business rules, persist changes, and return the result. The website gateway contains the complete action router; the numbered standalone workflows are alternate entry points, not subworkflows called by that gateway.
