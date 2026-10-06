@@ -38,6 +38,14 @@ Records use a shared Data Table with a key, record kind, and JSON payload. This 
 | Email and Drive | Simulated delivery and fictional sample resumes |
 | Audio | Browser playback/recording; no server-side audio retention or real STT |
 
+## Candidate review filters
+
+The Persian **کاندیداها** view supports combined job and application-status filters, a visible/total count, and a reset control. Search matches candidate name, email, skills, and job title, department, location and skills. Every query term must occur somewhere in these fields; matching is literal and case-insensitive. Arabic yeh/kaf, common Arabic marks, spacing and Persian half-spaces are normalized for display search only. Source records, mock scores, ordering and human decisions are unchanged.
+
+No-match feedback is distinct from an empty application list. Closed jobs remain searchable, and refreshing data does not silently clear an active filter. Filters apply to the loaded snapshot and reset on a full page reload; no n8n action is triggered by filtering. Job/resume search also uses the shared normalization.
+
+Run `npm run test:search` for the isolated search tests (Node >=22.13). The CI workflow builds the application and runs the full test suite without connecting to n8n; this does not verify a live recruitment lifecycle.
+
 ## Documentation
 
 - [Persian getting-started guide](START_HERE_FA.md)
