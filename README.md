@@ -56,6 +56,10 @@ Run `npm run test:search` for the isolated search tests (Node >=22.13). The CI w
 - [GitHub preparation checklist](docs/GITHUB_PREPARATION_FA.md)
 - [Roadmap](docs/ROADMAP.md)
 
+## Python backend option
+
+The dashboard can now connect to the standalone [TalentFlow Python](https://github.com/ghazalehgholinejad/talentflow-python) backend instead of n8n. Set `TALENTFLOW_BACKEND=python` and follow the [Persian setup guide](docs/PYTHON_BACKEND_FA.md). This uses an independent SQLite database; existing n8n records are not migrated. Without this setting, the original n8n path remains active.
+
 ## Run locally
 
 Local Persian recruitment frontend, n8n Cloud business workflows, and n8n Data Table persistence. External AI, Drive and email outputs are explicitly mocked. No ChatGPT hosting, no paid API required.

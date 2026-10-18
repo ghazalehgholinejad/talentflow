@@ -31,3 +31,26 @@ test('proxy authenticates n8n requests, replaces client token, validates envelop
     globalThis.fetch=previous.fetch;
   }
 });
+
+test('Python backend selection uses local API, preserves the envelope, and rejects remote endpoints',async()=>{
+  const names=['TALENTFLOW_BACKEND','TALENTFLOW_PYTHON_URL','TALENTFLOW_API_KEY'];
+  const previous=Object.fromEntries(names.map(n=>[n,process.env[n]]));
+  const originalFetch=globalThis.fetch;
+  try {
+    process.env.TALENTFLOW_BACKEND='python';
+    process.env.TALENTFLOW_PYTHON_URL='http://127.0.0.1:8000';
+    process.env.TALENTFLOW_API_KEY='test-only-'.repeat(6);
+    let seen;
+    globalThis.fetch=async(url,options)=>{seen={url,options};return Response.json({ok:true,version:'talentflow-v2',backend:'python-sqlite',result:{jobs:[]}});};
+    assert.equal((await callGateway({action:'snapshot'})).backend,'python-sqlite');
+    assert.equal(seen.url,'http://127.0.0.1:8000/api/talentflow');
+    assert.equal(seen.options.headers['x-talentflow-secret'],process.env.TALENTFLOW_API_KEY);
+    process.env.TALENTFLOW_PYTHON_URL='https://example.com';
+    await assert.rejects(callGateway({action:'snapshot'}),/loopback/);
+    process.env.TALENTFLOW_BACKEND='typo';
+    await assert.rejects(callGateway({action:'snapshot'}),/TALENTFLOW_BACKEND/);
+  } finally {
+    for(const name of names)if(previous[name]===undefined)delete process.env[name];else process.env[name]=previous[name];
+    globalThis.fetch=originalFetch;
+  }
+});
